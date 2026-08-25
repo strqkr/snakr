@@ -32,16 +32,18 @@ type game struct {
 	score     int
 	highScore int
 	over      bool
+	wrap      bool
 	tickMS    time.Duration
 	scores    *highScoreStore
 }
 
-func newGame(scores *highScoreStore) *game {
+func newGame(scores *highScoreStore, wrap bool) *game {
 	g := &game{
 		snake:  []point{{boardW / 2, boardH / 2}},
 		dir:    right,
 		tickMS: baseTickMS * time.Millisecond,
 		scores: scores,
+		wrap:   wrap,
 	}
 	if scores != nil {
 		g.highScore = scores.load()
@@ -93,8 +95,12 @@ func (g *game) step() {
 	}
 
 	if next.x < 0 || next.x >= boardW || next.y < 0 || next.y >= boardH {
-		g.finish()
-		return
+		if !g.wrap {
+			g.finish()
+			return
+		}
+		next.x = (next.x + boardW) % boardW
+		next.y = (next.y + boardH) % boardH
 	}
 	for _, s := range g.snake {
 		if s == next {
@@ -162,7 +168,11 @@ func (g *game) draw() {
 			termbox.SetCell(i, boardH+3, r, termbox.ColorRed, termbox.ColorDefault)
 		}
 	} else {
-		hint := " wasd / arrows to move — q to quit "
+		wrapState := "off"
+		if g.wrap {
+			wrapState = "on"
+		}
+		hint := fmt.Sprintf(" wasd / arrows to move — m: toggle wrap (%s) — q to quit ", wrapState)
 		for i, r := range hint {
 			termbox.SetCell(i, boardH+3, r, termbox.ColorDarkGray, termbox.ColorDefault)
 		}
@@ -183,7 +193,8 @@ func main() {
 	if err != nil {
 		scores = nil
 	}
-	g := newGame(scores)
+	wrap := false
+	g := newGame(scores, wrap)
 	events := make(chan termbox.Event)
 	go func() {
 		for {
@@ -205,8 +216,11 @@ func main() {
 			case ev.Key == termbox.KeyEsc, ev.Ch == 'q':
 				return
 			case ev.Ch == 'r' && g.over:
-				g = newGame(scores)
+				g = newGame(scores, wrap)
 				ticker.Reset(g.tickMS)
+			case ev.Ch == 'm' && !g.over:
+				wrap = !wrap
+				g.wrap = wrap
 			case ev.Key == termbox.KeyArrowUp, ev.Ch == 'w':
 				g.setDirection(up)
 			case ev.Key == termbox.KeyArrowDown, ev.Ch == 's':
