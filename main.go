@@ -26,19 +26,25 @@ const (
 )
 
 type game struct {
-	snake   []point
-	dir     direction
-	food    point
-	score   int
-	over    bool
-	tickMS  time.Duration
+	snake     []point
+	dir       direction
+	food      point
+	score     int
+	highScore int
+	over      bool
+	tickMS    time.Duration
+	scores    *highScoreStore
 }
 
-func newGame() *game {
+func newGame(scores *highScoreStore) *game {
 	g := &game{
-		snake: []point{{boardW / 2, boardH / 2}},
-		dir:   right,
+		snake:  []point{{boardW / 2, boardH / 2}},
+		dir:    right,
 		tickMS: baseTickMS * time.Millisecond,
+		scores: scores,
+	}
+	if scores != nil {
+		g.highScore = scores.load()
 	}
 	g.spawnFood()
 	return g
@@ -87,12 +93,12 @@ func (g *game) step() {
 	}
 
 	if next.x < 0 || next.x >= boardW || next.y < 0 || next.y >= boardH {
-		g.over = true
+		g.finish()
 		return
 	}
 	for _, s := range g.snake {
 		if s == next {
-			g.over = true
+			g.finish()
 			return
 		}
 	}
@@ -106,6 +112,16 @@ func (g *game) step() {
 		}
 	} else {
 		g.snake = g.snake[:len(g.snake)-1]
+	}
+}
+
+func (g *game) finish() {
+	g.over = true
+	if g.score > g.highScore {
+		g.highScore = g.score
+		if g.scores != nil {
+			_ = g.scores.save(g.highScore)
+		}
 	}
 }
 
@@ -132,13 +148,16 @@ func (g *game) draw() {
 
 	termbox.SetCell(g.food.x+1, g.food.y+1, '●', termbox.ColorRed, termbox.ColorDefault)
 
-	status := fmt.Sprintf(" score: %d ", g.score)
+	status := fmt.Sprintf(" score: %d   best: %d ", g.score, g.highScore)
 	for i, r := range status {
 		termbox.SetCell(i, boardH+2, r, termbox.ColorYellow, termbox.ColorDefault)
 	}
 
 	if g.over {
 		msg := fmt.Sprintf(" game over — final score %d — press r to restart, q to quit ", g.score)
+		if g.score > 0 && g.score == g.highScore {
+			msg = fmt.Sprintf(" new high score: %d! — press r to restart, q to quit ", g.score)
+		}
 		for i, r := range msg {
 			termbox.SetCell(i, boardH+3, r, termbox.ColorRed, termbox.ColorDefault)
 		}
@@ -160,7 +179,11 @@ func main() {
 
 	rand.Seed(time.Now().UnixNano())
 
-	g := newGame()
+	scores, err := newHighScoreStore()
+	if err != nil {
+		scores = nil
+	}
+	g := newGame(scores)
 	events := make(chan termbox.Event)
 	go func() {
 		for {
@@ -182,7 +205,7 @@ func main() {
 			case ev.Key == termbox.KeyEsc, ev.Ch == 'q':
 				return
 			case ev.Ch == 'r' && g.over:
-				g = newGame()
+				g = newGame(scores)
 				ticker.Reset(g.tickMS)
 			case ev.Key == termbox.KeyArrowUp, ev.Ch == 'w':
 				g.setDirection(up)
