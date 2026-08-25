@@ -20,33 +20,39 @@ const (
 )
 
 const (
-	boardW = 40
-	boardH = 20
+	boardW     = 40
+	boardH     = 20
 	baseTickMS = 140
 )
 
 type game struct {
-	snake     []point
-	dir       direction
-	food      point
-	score     int
-	highScore int
-	over      bool
-	wrap      bool
-	tickMS    time.Duration
-	scores    *highScoreStore
+	snake       []point
+	dir         direction
+	food        point
+	score       int
+	highScore   int
+	over        bool
+	wrap        bool
+	obstaclesOn bool
+	obstacles   []point
+	tickMS      time.Duration
+	scores      *highScoreStore
 }
 
-func newGame(scores *highScoreStore, wrap bool) *game {
+func newGame(scores *highScoreStore, wrap, obstaclesOn bool) *game {
 	g := &game{
-		snake:  []point{{boardW / 2, boardH / 2}},
-		dir:    right,
-		tickMS: baseTickMS * time.Millisecond,
-		scores: scores,
-		wrap:   wrap,
+		snake:       []point{{boardW / 2, boardH / 2}},
+		dir:         right,
+		tickMS:      baseTickMS * time.Millisecond,
+		scores:      scores,
+		wrap:        wrap,
+		obstaclesOn: obstaclesOn,
 	}
 	if scores != nil {
 		g.highScore = scores.load()
+	}
+	if obstaclesOn {
+		g.obstacles = genObstacles(g.snake)
 	}
 	g.spawnFood()
 	return g
@@ -61,6 +67,9 @@ func (g *game) spawnFood() {
 				clash = true
 				break
 			}
+		}
+		if !clash && g.obstaclesOn && containsPoint(g.obstacles, p) {
+			clash = true
 		}
 		if !clash {
 			g.food = p
@@ -108,6 +117,10 @@ func (g *game) step() {
 			return
 		}
 	}
+	if g.obstaclesOn && containsPoint(g.obstacles, next) {
+		g.finish()
+		return
+	}
 
 	g.snake = append([]point{next}, g.snake...)
 	if next == g.food {
@@ -154,6 +167,10 @@ func (g *game) draw() {
 
 	termbox.SetCell(g.food.x+1, g.food.y+1, '●', termbox.ColorRed, termbox.ColorDefault)
 
+	for _, o := range g.obstacles {
+		termbox.SetCell(o.x+1, o.y+1, '▓', termbox.ColorMagenta, termbox.ColorDefault)
+	}
+
 	status := fmt.Sprintf(" score: %d   best: %d ", g.score, g.highScore)
 	for i, r := range status {
 		termbox.SetCell(i, boardH+2, r, termbox.ColorYellow, termbox.ColorDefault)
@@ -172,7 +189,11 @@ func (g *game) draw() {
 		if g.wrap {
 			wrapState = "on"
 		}
-		hint := fmt.Sprintf(" wasd / arrows to move — m: toggle wrap (%s) — q to quit ", wrapState)
+		obstaclesState := "off"
+		if g.obstaclesOn {
+			obstaclesState = "on"
+		}
+		hint := fmt.Sprintf(" wasd / arrows to move — m: wrap (%s) — o: obstacles (%s) — q to quit ", wrapState, obstaclesState)
 		for i, r := range hint {
 			termbox.SetCell(i, boardH+3, r, termbox.ColorDarkGray, termbox.ColorDefault)
 		}
@@ -194,7 +215,8 @@ func main() {
 		scores = nil
 	}
 	wrap := false
-	g := newGame(scores, wrap)
+	obstaclesOn := false
+	g := newGame(scores, wrap, obstaclesOn)
 	events := make(chan termbox.Event)
 	go func() {
 		for {
@@ -216,11 +238,22 @@ func main() {
 			case ev.Key == termbox.KeyEsc, ev.Ch == 'q':
 				return
 			case ev.Ch == 'r' && g.over:
-				g = newGame(scores, wrap)
+				g = newGame(scores, wrap, obstaclesOn)
 				ticker.Reset(g.tickMS)
 			case ev.Ch == 'm' && !g.over:
 				wrap = !wrap
 				g.wrap = wrap
+			case ev.Ch == 'o' && !g.over:
+				obstaclesOn = !obstaclesOn
+				g.obstaclesOn = obstaclesOn
+				if obstaclesOn {
+					g.obstacles = genObstacles(g.snake)
+					if containsPoint(g.obstacles, g.food) {
+						g.spawnFood()
+					}
+				} else {
+					g.obstacles = nil
+				}
 			case ev.Key == termbox.KeyArrowUp, ev.Ch == 'w':
 				g.setDirection(up)
 			case ev.Key == termbox.KeyArrowDown, ev.Ch == 's':
